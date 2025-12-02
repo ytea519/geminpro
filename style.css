@@ -1,0 +1,324 @@
+/* style.css */
+:root {
+    --bg-color: #0f172a;
+    --panel-bg: rgba(30, 41, 59, 0.75);
+    --panel-border: rgba(148, 163, 184, 0.15);
+    --accent-color: #3b82f6;
+    --text-main: #f1f5f9;
+    --text-sub: #94a3b8;
+    --btn-shadow: #1e3a8a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg-color) radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg-color) 70%);
+    color: var(--text-main);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* --- 通用组件 --- */
+.glass-panel {
+    background: var(--panel-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--panel-border);
+}
+
+.btn-3d {
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-weight: 600;
+    box-shadow: 0 4px 0 var(--btn-shadow), 0 5px 10px rgba(0,0,0,0.2);
+    transition: transform 0.1s, box-shadow 0.1s;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.btn-3d:active { transform: translateY(4px); box-shadow: 0 0 0 var(--btn-shadow); }
+.btn-3d:disabled { background: #475569; box-shadow: none; transform: none; opacity: 0.7; }
+
+/* --- 布局 --- */
+.app-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+header {
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+    margin-top: 70px; /* 为顶部固定输入区留空间 */
+    transition: margin-top 0.3s ease;
+}
+header h2 { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.5px; }
+
+/* 当有预览图时增加顶部间距 */
+body.has-preview header {
+    margin-top: 170px;
+}
+
+/* --- 历史记录区域 --- */
+.history-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 20px;
+    padding-bottom: 20px; /* 顶部布局不需要底部留空 */
+}
+
+.grid-layout {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr); /* 默认两列 */
+    gap: 16px;
+}
+
+.history-item {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--panel-border);
+    background: rgba(0,0,0,0.2);
+    cursor: pointer;
+}
+.history-item img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+.history-item:hover img { transform: scale(1.05); }
+
+.item-badge {
+    position: absolute;
+    top: 8px; left: 8px;
+    background: rgba(59, 130, 246, 0.9);
+    font-size: 10px; padding: 2px 6px;
+    border-radius: 4px; z-index: 2;
+}
+
+.item-actions {
+    position: absolute;
+    bottom: 0; right: 0; left: 0;
+    padding: 10px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.8));
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.history-item:hover .item-actions { opacity: 1; }
+/* 移动端默认显示操作栏 */
+@media (hover: none) { .item-actions { opacity: 1; } }
+
+.icon-btn {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border: none;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+}
+
+/* --- 输入区域 (顶部固定设计) --- */
+.input-section {
+    position: fixed; /* 固定在顶部 */
+    top: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    border-radius: 0;
+    box-shadow: 0 2px 20px rgba(0,0,0,0.3);
+    z-index: 100;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+/* 1. 预览层 (位于输入框上方) */
+.preview-bar {
+    padding: 0;
+    max-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: rgba(15, 23, 42, 0.4);
+    display: flex;
+    gap: 8px;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+.preview-bar.visible {
+    padding: 12px 20px;
+    max-height: 100px; /* 展开 */
+}
+
+.thumb-wrapper {
+    position: relative;
+    width: 64px; height: 64px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.1);
+    overflow: hidden;
+}
+.thumb-wrapper img { width: 100%; height: 100%; object-fit: cover; }
+.thumb-remove {
+    position: absolute; top: 2px; right: 2px;
+    width: 16px; height: 16px;
+    background: rgba(239,68,68,0.9);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; cursor: pointer;
+}
+
+/* 2. 控制层 (按钮+输入框) */
+.control-bar {
+    display: flex;
+    align-items: flex-end;
+    padding: 12px 20px;
+    gap: 10px;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.upload-trigger {
+    width: 44px; height: 44px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px dashed rgba(255,255,255,0.3);
+    color: var(--text-sub);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+    transition: all 0.2s;
+}
+.upload-trigger:hover, .upload-trigger.active {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.main-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 16px;
+    padding: 10px 5px;
+    resize: none;
+    max-height: 120px;
+    outline: none;
+    line-height: 1.5;
+}
+.main-input::placeholder { color: rgba(255,255,255,0.3); }
+
+.send-btn {
+    height: 44px;
+    padding: 0 20px;
+    font-size: 15px;
+    flex-shrink: 0;
+}
+
+/* 加载动画 */
+.loader {
+    width: 18px; height: 18px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: none;
+}
+.loading .loader { display: block; }
+.loading span { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- 弹窗 --- */
+.modal {
+    display: none;
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.9);
+    z-index: 1000;
+    justify-content: center; align-items: center;
+    backdrop-filter: blur(5px);
+}
+.modal-content {
+    background: #1e293b;
+    width: 95%; max-width: 1000px; height: 90%;
+    border-radius: 16px;
+    display: flex; flex-direction: column;
+    position: relative;
+    border: 1px solid var(--panel-border);
+}
+.close-modal {
+    position: absolute; top: 15px; right: 15px;
+    width: 36px; height: 36px;
+    border-radius: 50%; background: rgba(0,0,0,0.5);
+    color: white; border: 1px solid rgba(255,255,255,0.2);
+    z-index: 10; font-size: 20px;
+}
+.modal-img-area { flex: 1; display: flex; justify-content: center; align-items: center; background: #000; overflow: hidden; border-radius: 16px 16px 0 0; }
+.modal-img-area img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.modal-footer { padding: 15px; background: #1e293b; border-top: 1px solid var(--panel-border); display: flex; flex-direction: column; gap: 10px; }
+.input-refs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px; }
+.ref-thumb { width: 40px; height: 40px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); cursor: pointer; }
+.prompt-display { background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; color: #cbd5e1; font-size: 0.9rem; max-height: 80px; overflow-y: auto; }
+
+/* --- 手机响应式设计 --- */
+@media (max-width: 768px) {
+    .app-container { padding: 0; }
+    .history-container { padding: 10px; padding-bottom: 10px; }
+    
+    /* 移动端顶部间距调整 */
+    header {
+        margin-top: 60px;
+    }
+    
+    body.has-preview header {
+        margin-top: 140px;
+    }
+    
+    /* 历史记录一行一个 */
+    .grid-layout {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+    
+    /* 输入区样式调整 */
+    .control-bar {
+        padding: 10px;
+    }
+    
+    .preview-bar.visible {
+        max-height: 80px;
+        padding: 10px;
+    }
+    
+    /* 调整按钮点击区域 */
+    .send-btn { padding: 0 15px; min-width: 80px; }
+    .thumb-wrapper { width: 50px; height: 50px; }
+}
+
+/* --- 大屏幕优化 --- */
+@media (min-width: 1200px) {
+    .grid-layout {
+        grid-template-columns: repeat(3, 1fr); /* 大屏幕显示三列 */
+    }
+}
+
+/* 登录层 */
+#login-overlay { position: fixed; inset: 0; z-index: 5000; display: flex; justify-content: center; align-items: center; background: #0f172a; }
+.login-card { width: 300px; padding: 30px; text-align: center; }
+.login-card input { width: 100%; padding: 12px; margin: 15px 0; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px; }
