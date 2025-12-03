@@ -739,13 +739,17 @@
                 this.setHint(this.defaultHint);
             } catch (error) {
                 console.error('公共画廊加载失败:', error);
+                
+                let errorMessage = '加载失败，请稍后重试';
                 if (error.name === 'AbortError') {
+                    errorMessage = '加载超时，请检查网络';
                     this.setHint('加载超时，请检查网络', 'error');
                 } else {
-                    this.setHint('加载失败，请稍后重试', 'error');
+                    this.setHint(errorMessage, 'error');
                 }
+                
                 if (AppState.publicGalleryData.length === 0) {
-                    this.showEmpty('无法加载公共画廊，请稍后重试');
+                    this.showEmpty(errorMessage);
                 }
             } finally {
                 this.setLoading(false);
@@ -1038,12 +1042,24 @@
 
             } catch (err) {
                 console.error('生成失败:', err);
+                
+                let errorMessage = '生成失败，请重试';
+                if (err.message.includes('API认证失败')) {
+                    errorMessage = 'API认证失败，请联系管理员检查API配置';
+                } else if (err.message.includes('无法连接到API服务器')) {
+                    errorMessage = '无法连接到API服务器，请检查网络连接';
+                } else if (err.message.includes('API请求超时')) {
+                    errorMessage = 'API请求超时，请稍后重试';
+                } else if (err.message) {
+                    errorMessage = err.message;
+                }
+                
                 if (err.name === 'AbortError') {
                     this.statusBar.textContent = '⚠️ 生成超时';
                     alert('生成超时，请检查网络后重试');
                 } else {
                     this.statusBar.textContent = '❌ 生成失败';
-                    alert('生成失败: ' + err.message);
+                    alert(errorMessage);
                 }
             } finally {
                 this.setLoading(false);
