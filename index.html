@@ -117,8 +117,21 @@
         <!-- 历史画廊 -->
         <div class="history-container">
             <div class="grid-layout" id="gallery"></div>
+
+            <section class="public-gallery-section glass-panel">
+                <div class="section-title">
+                    <div>
+                        <h3>公共画廊</h3>
+                        <p class="section-subtitle" id="public-gallery-hint">分享你的作品，欣赏社区灵感</p>
+                    </div>
+                    <div class="section-actions">
+                        <button class="icon-btn" id="refresh-public-gallery" title="刷新公共画廊" aria-label="刷新公共画廊">⟳</button>
+                    </div>
+                </div>
+                <div class="grid-layout public-grid" id="public-gallery"></div>
+            </section>
         </div>
-        
+
         <input type="file" id="file-input" multiple accept="image/*" hidden>
     </div>
     
@@ -146,12 +159,19 @@
     const AppState = {
         db: null,
         currentImages: [],     // 当前上传的图片 Base64 数组
-        galleryData: [],       // 画廊数据缓存
+        galleryData: [],       // 个人画廊数据缓存
+        publicGalleryData: [], // 公共画廊数据缓存
         currentModalItem: null // 当前弹窗显示的项目
     };
-    
+
+    const STORAGE_KEYS = {
+        publicGalleryTokens: 'BananaPro_PublicGallery_Tokens_v1'
+    };
+
+    const DEFAULT_PUBLIC_HINT = '分享你的作品，欣赏社区灵感';
+
     const DB_NAME = 'BananaProDB_v3';
-    const DB_VERSION = 1;
+
     const STORE_NAME = 'artworks';
     
     // ============================================
@@ -410,7 +430,17 @@
             // 操作按钮
             const actions = document.createElement('div');
             actions.className = 'item-actions';
-            
+
+            const shareBtn = document.createElement('button');
+            shareBtn.className = 'icon-btn share-btn';
+            shareBtn.innerHTML = '🌐';
+            shareBtn.title = '发布到公共画廊';
+            shareBtn.setAttribute('aria-label', '发布到公共画廊');
+            shareBtn.onclick = (e) => {
+                e.stopPropagation();
+                PublicGalleryManager.share(item, shareBtn);
+            };
+
             const downloadBtn = document.createElement('button');
             downloadBtn.className = 'icon-btn';
             downloadBtn.innerHTML = '⬇';
@@ -418,7 +448,7 @@
                 e.stopPropagation();
                 this.downloadImage(item);
             };
-            
+
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'icon-btn';
             deleteBtn.style.background = 'rgba(239,68,68,0.8)';
@@ -427,11 +457,12 @@
                 e.stopPropagation();
                 this.deleteItem(item.id);
             };
-            
+
+            actions.appendChild(shareBtn);
             actions.appendChild(downloadBtn);
             actions.appendChild(deleteBtn);
             el.appendChild(actions);
-            
+
             // 点击打开弹窗
             el.onclick = () => ModalManager.open(item);
             
@@ -541,18 +572,287 @@
             textarea.focus();
         }
     };
-    
+
+    // ============================================
+    // 公共画廊管理模块
+    // ============================================
+    const PublicGalleryManager = {
+        container: null,
+        refreshBtn: null,
+        hintEl: null,
+        tokens: {},
+        isLoading: false,
+        defaultHint: DEFAULT_PUBLIC_HINT,
+        hintTimer: null,
+
+        init() {
+            this.container = document.getElementById('public-gallery');
+            this.refreshBtn = document.getElementById('refresh-public-gallery');
+            this.hintEl = document.getElementById('public-gallery-hint');
+            this.tokens = this.loadTokens();
+            if (this.hintEl && this.hintEl.textContent) {
+                this.defaultHint = this.hintEl.textContent;
+            }
+            this.setHint(this.defaultHint);
+
+            if (this.refreshBtn) {
+                this.refreshBtn.onclick = () => this.fetch();
+            }
+        },
+
+        loadTokens() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEYS.publicGalleryTokens);
+                return raw ? JSON.parse(raw) : {};
+            } catch (error) {
+                console.warn('无法读取公共画廊令牌:', error);
+                return {};
+            }
+        },
+
+        saveTokens() {
+            try {
+                localStorage.setItem(STORAGE_KEYS.publicGalleryTokens, JSON.stringify(this.tokens));
+            } catch (error) {
+                console.warn('无法保存公共画廊令牌:', error);
+            }
+        },
+
+        setHint(message, mode = 'default') {
+            if (!this.hintEl) return;
+            this.hintEl.textContent = message;
+            this.hintEl.classList.remove('is-error', 'is-success');
+            if (mode === 'error') {
+                this.hintEl.classList.add('is-error');
+            } else if (mode === 'success') {
+                this.hintEl.classList.add('is-success');
+            }
+            clearTimeout(this.hintTimer);
+            if (mode !== 'default') {
+                this.hintTimer = setTimeout(() => {
+                    this.setHint(this.defaultHint);
+                }, 4000);
+            }
+        },
+
+        setLoading(loading) {
+            this.isLoading = loading;
+            if (this.refreshBtn) {
+                this.refreshBtn.classList.toggle('spinning', loading);
+                this.refreshBtn.disabled = loading;
+            }
+        },
+
+        async fetch() {
+            if (!this.container) return;
+            this.setLoading(true);
+            try {
+                const res = await fetch('/api/public-gallery');
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || '无法加载公共画廊');
+                }
+
+                AppState.publicGalleryData = data.items || [];
+                this.render();
+                this.setHint(this.defaultHint);
+            } catch (error) {
+                console.error('公共画廊加载失败:', error);
+                this.setHint('公共画廊加载失败，请稍后重试', 'error');
+                this.showEmpty('无法加载公共画廊，请稍后重试');
+            } finally {
+                this.setLoading(false);
+            }
+        },
+
+        showEmpty(message) {
+            if (!this.container) return;
+            this.container.innerHTML = `
+                <div class="public-gallery-empty">
+                    <div>🌌</div>
+                    <p>${message}</p>
+                </div>
+            `;
+        },
+
+        render() {
+            if (!this.container) return;
+
+            if (!AppState.publicGalleryData || AppState.publicGalleryData.length === 0) {
+                this.showEmpty('还没有人分享作品，成为第一个吧！');
+                return;
+            }
+
+            this.container.innerHTML = '';
+            AppState.publicGalleryData.forEach(item => {
+                const card = this.createCard(item);
+                this.container.appendChild(card);
+            });
+        },
+
+        createCard(item) {
+            const card = document.createElement('div');
+            card.className = 'public-card';
+
+            const img = document.createElement('img');
+            img.loading = 'lazy';
+            img.src = item.image;
+            card.appendChild(img);
+
+            const info = document.createElement('div');
+            info.className = 'public-card-info';
+
+            const promptText = document.createElement('p');
+            promptText.className = 'public-card-prompt';
+            promptText.textContent = item.prompt || '未提供提示词';
+            info.appendChild(promptText);
+
+            const footer = document.createElement('div');
+            footer.className = 'public-card-footer';
+
+            const timeText = document.createElement('span');
+            timeText.textContent = this.formatTimestamp(item.timestamp);
+            footer.appendChild(timeText);
+
+            if (this.canDelete(item.id)) {
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'icon-btn small public-delete-btn';
+                deleteBtn.innerHTML = '🗑';
+                deleteBtn.title = '删除这张作品';
+                deleteBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.delete(item.id);
+                };
+                footer.appendChild(deleteBtn);
+            }
+
+            info.appendChild(footer);
+            card.appendChild(info);
+
+            card.onclick = () => ModalManager.open(item);
+
+            return card;
+        },
+
+        formatTimestamp(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            if (Number.isNaN(date.getTime())) {
+                return '';
+            }
+            return date.toLocaleString();
+        },
+
+        canDelete(id) {
+            return Boolean(this.tokens[id]);
+        },
+
+        markOwned(id, token) {
+            if (!id || !token) return;
+            this.tokens[id] = token;
+            this.saveTokens();
+        },
+
+        removeOwnership(id) {
+            if (this.tokens[id]) {
+                delete this.tokens[id];
+                this.saveTokens();
+            }
+        },
+
+        async share(item, triggerBtn) {
+            if (!item) return;
+
+            const confirmShare = confirm('确认将这张作品发布到公共画廊？提示词将对所有人可见。');
+            if (!confirmShare) {
+                return;
+            }
+
+            if (triggerBtn) {
+                triggerBtn.disabled = true;
+            }
+
+            try {
+                const res = await fetch('/api/public-gallery', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: item.prompt,
+                        image: item.image,
+                        inputImages: item.inputImages || []
+                    })
+                });
+
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || '发布失败');
+                }
+
+                AppState.publicGalleryData = [data.item, ...(AppState.publicGalleryData || [])];
+                this.markOwned(data.item.id, data.deleteToken);
+                this.render();
+                this.setHint('作品已发布至公共画廊', 'success');
+            } catch (error) {
+                console.error('发布到公共画廊失败:', error);
+                alert('发布失败: ' + error.message);
+                this.setHint('发布失败，请稍后重试', 'error');
+            } finally {
+                if (triggerBtn) {
+                    triggerBtn.disabled = false;
+                }
+            }
+        },
+
+        async delete(id) {
+            const token = this.tokens[id];
+            if (!token) {
+                alert('无法获取删除凭证，无法删除该作品');
+                return;
+            }
+
+            const confirmDelete = confirm('确定要删除这张公共画廊作品吗？');
+            if (!confirmDelete) {
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/public-gallery/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ deleteToken: token })
+                });
+
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || '删除失败');
+                }
+
+                AppState.publicGalleryData = AppState.publicGalleryData.filter(item => item.id !== id);
+                this.removeOwnership(id);
+                this.render();
+                this.setHint('作品已删除', 'success');
+            } catch (error) {
+                console.error('删除公共画廊作品失败:', error);
+                alert('删除失败: ' + error.message);
+                this.setHint('删除失败，请稍后再试', 'error');
+            }
+        }
+    };
+
     // ============================================
     // 生成请求模块
     // ============================================
     const Generator = {
         sendBtn: null,
         textarea: null,
-        
+
         init() {
             this.sendBtn = document.getElementById('send-btn');
             this.textarea = document.getElementById('prompt');
-            
+
             this.sendBtn.onclick = () => this.generate();
             
             // 输入框自动高度
@@ -734,19 +1034,30 @@
     // ============================================
     // 全局函数（供 HTML onclick 调用）
     // ============================================
+    async function loadWorkspaceData() {
+        try {
+            await Promise.all([
+                GalleryManager.load(),
+                PublicGalleryManager.fetch()
+            ]);
+        } catch (error) {
+            console.error('加载画廊数据失败:', error);
+        }
+    }
+
     async function doLogin() {
         const pwd = document.getElementById('pwd').value;
         if (!pwd) return;
-        
+
         const success = await Auth.login(pwd);
         if (success) {
             Auth.unlock();
-            await GalleryManager.load();
+            await loadWorkspaceData();
         } else {
             alert('密码错误');
         }
     }
-    
+
     function closeModal() {
         ModalManager.close();
     }
@@ -763,17 +1074,18 @@
             PreviewManager.init();
             GalleryManager.init();
             ModalManager.init();
+            PublicGalleryManager.init();
             Generator.init();
             DragDrop.init();
             FileSelector.init();
-            
+
             // 检查认证状态
             const isAuth = await Auth.check();
             if (isAuth) {
                 Auth.unlock();
-                await GalleryManager.load();
+                await loadWorkspaceData();
             }
-            
+
             console.log('App initialized successfully');
         } catch (err) {
             console.error('App initialization failed:', err);

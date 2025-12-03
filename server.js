@@ -9,6 +9,8 @@ import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs/promises';
+import crypto from 'crypto';
 
 // ============================================
 // 配置初始化模块
@@ -17,14 +19,24 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const parsePositiveInt = (value, fallback) => {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 const CONFIG = {
     port: process.env.PORT || 3000,
     apiKey: process.env.OPENAI_API_KEY || 'sk-123456',
     apiUrl: process.env.OPENAI_API_URL || 'http://127.0.0.1:8000/v1/chat/completions',
     sitePassword: process.env.SITE_PASSWORD || '123456',
     modelName: process.env.MODEL_NAME || 'banana-pro',
-    maxImages: 16
+    maxImages: 16,
+    maxPublicGalleryItems: parsePositiveInt(process.env.PUBLIC_GALLERY_LIMIT, 80)
 };
+
+const DATA_DIR = path.join(__dirname, 'data');
+const PUBLIC_GALLERY_FILE = path.join(DATA_DIR, 'public-gallery.json');
 
 // ============================================
 // Express 应用初始化
@@ -214,6 +226,77 @@ const APIService = {
 };
 
 // ============================================
+// 公共画廊存储模块
+// ============================================
+const generateId = () => {
+    if (typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return crypto.randomBytes(16).toString('hex');
+};
+
+const generateDeleteToken = () => crypto.randomBytes(24).toString('hex');
+
+const PublicGalleryStore = {
+    async ensureFile() {
+        await fs.mkdir(DATA_DIR, { recursive: true });
+        try {
+            await fs.access(PUBLIC_GALLERY_FILE);
+        } catch {
+            await fs.writeFile(PUBLIC_GALLERY_FILE, '[]', 'utf-8');
+        }
+    },
+
+    async readData() {
+        await this.ensureFile();
+        try {
+            const raw = await fs.readFile(PUBLIC_GALLERY_FILE, 'utf-8');
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] 读取公共画廊数据失败:`, error);
+            return [];
+        }
+    },
+
+    async writeData(items) {
+        await this.ensureFile();
+        await fs.writeFile(PUBLIC_GALLERY_FILE, JSON.stringify(items, null, 2), 'utf-8');
+    },
+
+    async getAll() {
+        return await this.readData();
+    },
+
+    async add(entry) {
+        const items = await this.readData();
+        items.unshift(entry);
+        if (items.length > CONFIG.maxPublicGalleryItems) {
+            items.splice(CONFIG.maxPublicGalleryItems);
+        }
+        await this.writeData(items);
+        return entry;
+    },
+
+    async remove(id, token) {
+        const items = await this.readData();
+        const targetIndex = items.findIndex(item => item.id === id);
+
+        if (targetIndex === -1) {
+            return { found: false };
+        }
+
+        if (items[targetIndex].deleteToken !== token) {
+            return { found: true, authorized: false };
+        }
+
+        items.splice(targetIndex, 1);
+        await this.writeData(items);
+        return { found: true, authorized: true };
+    }
+};
+
+// ============================================
 // 路由
 // ============================================
 
@@ -323,6 +406,112 @@ app.post('/api/generate', authMiddleware, async (req, res) => {
         res.status(500).json({
             success: false,
             message: error.message || '图片生成失败，请稍后重试'
+        });
+    }
+});
+
+// 公共画廊 - 获取列表
+app.get('/api/public-gallery', async (req, res) => {
+    try {
+        const items = await PublicGalleryStore.getAll();
+        const sanitized = items.map(({ deleteToken, ...rest }) => rest);
+        res.json({
+            success: true,
+            items: sanitized
+        });
+    } catch (error) {
+        console.error(`[${new Date().toISOString()}] 加载公共画廊失败:`, error);
+        res.status(500).json({
+            success: false,
+            message: '无法加载公共画廊，请稍后重试'
+        });
+    }
+});
+
+// 公共画廊 - 发布作品
+app.post('/api/public-gallery', authMiddleware, async (req, res) => {
+    const { prompt, image, inputImages } = req.body;
+
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+        return res.status(400).json({
+            success: false,
+            message: '请输入有效的提示词'
+        });
+    }
+
+    if (!image || typeof image !== 'string' || !ImageParser.isValidBase64Image(image)) {
+        return res.status(400).json({
+            success: false,
+            message: '请提供有效的图片数据'
+        });
+    }
+
+    const sanitizedRefs = Array.isArray(inputImages)
+        ? inputImages
+            .filter(img => typeof img === 'string' && ImageParser.isValidBase64Image(img))
+            .slice(0, CONFIG.maxImages)
+        : [];
+
+    const entry = {
+        id: generateId(),
+        prompt: prompt.trim(),
+        image,
+        inputImages: sanitizedRefs,
+        timestamp: new Date().toISOString(),
+        deleteToken: generateDeleteToken()
+    };
+
+    try {
+        await PublicGalleryStore.add(entry);
+        const { deleteToken, ...publicItem } = entry;
+        res.json({
+            success: true,
+            item: publicItem,
+            deleteToken
+        });
+    } catch (error) {
+        console.error(`[${new Date().toISOString()}] 发布公共画廊失败:`, error);
+        res.status(500).json({
+            success: false,
+            message: '发布失败，请稍后再试'
+        });
+    }
+});
+
+// 公共画廊 - 删除作品
+app.delete('/api/public-gallery/:id', authMiddleware, async (req, res) => {
+    const { deleteToken } = req.body || {};
+
+    if (!deleteToken || typeof deleteToken !== 'string') {
+        return res.status(400).json({
+            success: false,
+            message: '缺少删除凭证'
+        });
+    }
+
+    try {
+        const result = await PublicGalleryStore.remove(req.params.id, deleteToken);
+
+        if (!result.found) {
+            return res.status(404).json({
+                success: false,
+                message: '作品不存在或已被删除'
+            });
+        }
+
+        if (result.authorized === false) {
+            return res.status(403).json({
+                success: false,
+                message: '无权删除该作品'
+            });
+        }
+
+        res.json({ success: true, message: '删除成功' });
+    } catch (error) {
+        console.error(`[${new Date().toISOString()}] 删除公共画廊失败:`, error);
+        res.status(500).json({
+            success: false,
+            message: '删除失败，请稍后再试'
         });
     }
 });
