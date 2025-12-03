@@ -35,6 +35,10 @@ const CONFIG = {
     maxPublicGalleryItems: parsePositiveInt(process.env.PUBLIC_GALLERY_LIMIT, 80)
 };
 
+// 调试输出环境变量
+console.log(`[DEBUG] 环境变量 OPENAI_API_URL:`, process.env.OPENAI_API_URL);
+console.log(`[DEBUG] 最终 CONFIG.apiUrl:`, CONFIG.apiUrl);
+
 const DATA_DIR = path.join(__dirname, 'data');
 const PUBLIC_GALLERY_FILE = path.join(DATA_DIR, 'public-gallery.json');
 
@@ -199,29 +203,45 @@ const APIService = {
      * 从响应中提取图片
      */
     extractImageFromResponse(data) {
+        console.log(`[${new Date().toISOString()}] API响应类型:`, typeof data);
+        console.log(`[${new Date().toISOString()}] API响应结构:`, Object.keys(data || {}));
+
+        // 检查错误响应
+        if (data.error) {
+            throw new Error(`API返回错误: ${data.error}`);
+        }
+
         if (data.choices && data.choices[0] && data.choices[0].message) {
             const content = data.choices[0].message.content;
 
             console.log(`[${new Date().toISOString()}] 收到响应内容长度: ${content?.length || 0}`);
+            console.log(`[${new Date().toISOString()}] 响应内容预览:`, content?.substring(0, 200) + (content?.length > 200 ? '...' : ''));
 
             const imageData = ImageParser.extractBase64FromMarkdown(content);
 
             if (imageData && ImageParser.isValidBase64Image(imageData)) {
-                console.log(`[${new Date().toISOString()}] 成功提取图片数据`);
+                console.log(`[${new Date().toISOString()}] 成功提取图片数据，长度: ${imageData.length}`);
                 return imageData;
+            } else {
+                console.log(`[${new Date().toISOString()}] 未能从内容中提取有效图片数据`);
             }
         }
 
+        // 检查 DALL-E 格式
         if (data.data && data.data[0]) {
             if (data.data[0].b64_json) {
+                console.log(`[${new Date().toISOString()}] 使用 DALL-E b64_json 格式`);
                 return `data:image/png;base64,${data.data[0].b64_json}`;
             }
             if (data.data[0].url) {
+                console.log(`[${new Date().toISOString()}] 使用 DALL-E URL 格式`);
                 return data.data[0].url;
             }
         }
 
-        throw new Error('无法从 API 响应中提取图片数据');
+        // 如果到这里还没有找到图片，输出完整的响应用于调试
+        console.log(`[${new Date().toISOString()}] 完整API响应:`, JSON.stringify(data, null, 2));
+        throw new Error('无法从 API 响应中提取图片数据。请检查API配置和模型响应格式。');
     }
 };
 
@@ -386,6 +406,8 @@ app.post('/api/generate', authMiddleware, async (req, res) => {
 
     try {
         console.log(`[${new Date().toISOString()}] 开始生成图片...`);
+        console.log(`[${new Date().toISOString()}] API地址: ${CONFIG.apiUrl}`);
+        console.log(`[${new Date().toISOString()}] API密钥: ${CONFIG.apiKey.substring(0, 10)}...`);
 
         const apiResponse = await APIService.generateImage(trimmedPrompt, uploadedImages);
         const imageData = APIService.extractImageFromResponse(apiResponse);
@@ -402,10 +424,21 @@ app.post('/api/generate', authMiddleware, async (req, res) => {
 
     } catch (error) {
         console.error(`[${new Date().toISOString()}] 生成失败:`, error.message);
+        console.error(`[${new Date().toISOString()}] 错误堆栈:`, error.stack);
+
+        // 根据错误类型提供更具体的错误信息
+        let errorMessage = error.message;
+        if (error.message.includes('API返回错误: 未授权') || error.message.includes('401') || error.message.includes('Unauthorized')) {
+            errorMessage = 'API认证失败，请检查API密钥配置';
+        } else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+            errorMessage = '无法连接到API服务器，请检查网络连接和API地址配置';
+        } else if (error.message.includes('timeout')) {
+            errorMessage = 'API请求超时，请稍后重试';
+        }
 
         res.status(500).json({
             success: false,
-            message: error.message || '图片生成失败，请稍后重试'
+            message: errorMessage || '图片生成失败，请稍后重试'
         });
     }
 });
@@ -413,14 +446,19 @@ app.post('/api/generate', authMiddleware, async (req, res) => {
 // 公共画廊 - 获取列表
 app.get('/api/public-gallery', async (req, res) => {
     try {
+        console.log(`[${new Date().toISOString()}] 开始加载公共画廊...`);
         const items = await PublicGalleryStore.getAll();
         const sanitized = items.map(({ deleteToken, ...rest }) => rest);
+        
+        console.log(`[${new Date().toISOString()}] 公共画廊加载完成，项目数: ${sanitized.length}`);
+        
         res.json({
             success: true,
             items: sanitized
         });
     } catch (error) {
         console.error(`[${new Date().toISOString()}] 加载公共画廊失败:`, error);
+        console.error(`[${new Date().toISOString()}] 错误详情:`, error.stack);
         res.status(500).json({
             success: false,
             message: '无法加载公共画廊，请稍后重试'
