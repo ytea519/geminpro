@@ -1051,6 +1051,11 @@ body.has-preview header {
 
 /* --- Mobile Responsive Design --- */
 @media (max-width: 768px) {
+     .grid-layout {
+         grid-template-columns: 1fr;
+         gap: 12px;
+     }
+
      .public-gallery-section {
          padding: 20px;
          margin-top: 30px;
@@ -1068,7 +1073,7 @@ body.has-preview header {
      }
 
      .public-grid {
-         grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+         grid-template-columns: 1fr;
          gap: 14px;
          margin-top: 16px;
      }
@@ -1150,9 +1155,9 @@ body.has-preview header {
     }
 
     .public-grid {
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
-    }
+             grid-template-columns: 1fr;
+             gap: 12px;
+         }
 
     .public-card-info {
         padding: 12px;
