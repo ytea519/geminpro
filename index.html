@@ -271,26 +271,51 @@
                 reader.readAsDataURL(file);
             });
         },
-        
+
+        // 压缩图片（手机端优化）
+        async compressImage(base64Data, maxWidth = 1280) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    if (img.width <= maxWidth && base64Data.length < 500000) {
+                        resolve(base64Data);
+                        return;
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    const scale = Math.min(1, maxWidth / img.width);
+                    canvas.width = img.width * scale;
+                    canvas.height = img.height * scale;
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    resolve(canvas.toDataURL('image/jpeg', 0.8));
+                };
+                img.onerror = () => resolve(base64Data);
+                img.src = base64Data;
+            });
+        },
+
         // 处理上传的文件
         async processFiles(files) {
             const maxImages = 16;
             const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
-            
+
             for (const file of imageFiles) {
                 if (AppState.currentImages.length >= maxImages) {
                     alert(`最多只能上传 ${maxImages} 张图片`);
                     break;
                 }
-                
+
                 try {
-                    const base64 = await this.fileToBase64(file);
+                    let base64 = await this.fileToBase64(file);
+                    base64 = await this.compressImage(base64);
                     AppState.currentImages.push(base64);
                 } catch (err) {
                     console.error('图片读取失败:', err);
                 }
             }
-            
+
             PreviewManager.render();
         },
         
@@ -388,7 +413,7 @@
         
         render() {
             this.container.innerHTML = '';
-            
+
             if (AppState.galleryData.length === 0) {
                 this.container.innerHTML = `
                     <div style="grid-column: 1/-1; text-align: center; color: var(--text-sub); padding: 60px 20px;">
@@ -398,18 +423,20 @@
                 `;
                 return;
             }
-            
+
+            const fragment = document.createDocumentFragment();
             AppState.galleryData.forEach(item => {
                 const card = this.createCard(item);
-                this.container.appendChild(card);
+                fragment.appendChild(card);
             });
+            this.container.appendChild(fragment);
         },
         
         createCard(item) {
             const el = document.createElement('div');
             el.className = 'history-item';
             el.dataset.id = item.id;
-            
+
             // 参考图标记
             if (item.inputImages && item.inputImages.length > 0) {
                 const badge = document.createElement('div');
@@ -417,24 +444,26 @@
                 badge.textContent = `📎 ${item.inputImages.length}`;
                 el.appendChild(badge);
             }
-            
+
             // 主图片 - 使用 DOM API 设置 src
             const img = document.createElement('img');
             img.loading = 'lazy';
-            img.src = item.image;  // 关键：直接赋值，不用模板字符串
+            img.decoding = 'async';
+            img.src = item.image;
+            img.alt = `作品 ${item.id}`;
             img.onerror = () => {
                 console.error('图片加载失败, ID:', item.id);
                 img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect fill="%23333" width="100" height="100"/><text fill="%23666" x="50%" y="50%" text-anchor="middle" dy=".3em">Error</text></svg>';
             };
             el.appendChild(img);
-            
+
             // 操作按钮
             const actions = document.createElement('div');
             actions.className = 'item-actions';
 
             const shareBtn = document.createElement('button');
             shareBtn.className = 'icon-btn share-btn';
-            shareBtn.innerHTML = '🌐';
+            shareBtn.textContent = '🌐';
             shareBtn.title = '发布到公共画廊';
             shareBtn.setAttribute('aria-label', '发布到公共画廊');
             shareBtn.onclick = (e) => {
@@ -444,7 +473,8 @@
 
             const downloadBtn = document.createElement('button');
             downloadBtn.className = 'icon-btn';
-            downloadBtn.innerHTML = '⬇';
+            downloadBtn.textContent = '⬇';
+            downloadBtn.title = '下载图片';
             downloadBtn.onclick = (e) => {
                 e.stopPropagation();
                 this.downloadImage(item);
@@ -453,7 +483,8 @@
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'icon-btn';
             deleteBtn.style.background = 'rgba(239,68,68,0.8)';
-            deleteBtn.innerHTML = '🗑';
+            deleteBtn.textContent = '🗑';
+            deleteBtn.title = '删除图片';
             deleteBtn.onclick = (e) => {
                 e.stopPropagation();
                 this.deleteItem(item.id);
@@ -466,7 +497,7 @@
 
             // 点击打开弹窗
             el.onclick = () => ModalManager.open(item);
-            
+
             return el;
         },
         
@@ -586,7 +617,10 @@
         defaultHint: DEFAULT_PUBLIC_HINT,
         hintTimer: null,
         syncTimer: null,
-        syncInterval: 10000,
+        syncInterval: 0,
+        loadTimeout: null,
+        lastFetchTime: 0,
+        minFetchInterval: 5000,
 
         init() {
             this.container = document.getElementById('public-gallery');
@@ -602,12 +636,15 @@
                 this.refreshBtn.onclick = () => this.fetch();
             }
 
-            this.startRealtimeSync();
+            this.initialFetch();
+        },
+
+        async initialFetch() {
+            await this.fetch();
         },
 
         startRealtimeSync() {
-            this.fetch();
-            this.syncTimer = setInterval(() => this.fetch(), this.syncInterval);
+            // 实时同步已禁用 - 改为手动刷新提高性能
         },
 
         stopRealtimeSync() {
@@ -658,13 +695,39 @@
                 this.refreshBtn.classList.toggle('spinning', loading);
                 this.refreshBtn.disabled = loading;
             }
+            // 防止加载超时 - 30秒后强制停止
+            if (loading) {
+                clearTimeout(this.loadTimeout);
+                this.loadTimeout = setTimeout(() => {
+                    if (this.isLoading) {
+                        this.setLoading(false);
+                        this.setHint('加载超时，请稍后重试', 'error');
+                    }
+                }, 30000);
+            } else {
+                clearTimeout(this.loadTimeout);
+            }
         },
 
         async fetch() {
             if (!this.container) return;
+
+            // 防止过于频繁的请求
+            const now = Date.now();
+            if (now - this.lastFetchTime < this.minFetchInterval) {
+                return;
+            }
+            this.lastFetchTime = now;
+
             this.setLoading(true);
             try {
-                const res = await fetch('/api/public-gallery');
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+                const res = await fetch('/api/public-gallery', {
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
                 const data = await res.json();
 
                 if (!res.ok || !data.success) {
@@ -676,8 +739,14 @@
                 this.setHint(this.defaultHint);
             } catch (error) {
                 console.error('公共画廊加载失败:', error);
-                this.setHint('公共画廊加载失败，请稍后重试', 'error');
-                this.showEmpty('无法加载公共画廊，请稍后重试');
+                if (error.name === 'AbortError') {
+                    this.setHint('加载超时，请检查网络', 'error');
+                } else {
+                    this.setHint('加载失败，请稍后重试', 'error');
+                }
+                if (AppState.publicGalleryData.length === 0) {
+                    this.showEmpty('无法加载公共画廊，请稍后重试');
+                }
             } finally {
                 this.setLoading(false);
             }
@@ -702,19 +771,24 @@
             }
 
             this.container.innerHTML = '';
+            const fragment = document.createDocumentFragment();
             AppState.publicGalleryData.forEach(item => {
                 const card = this.createCard(item);
-                this.container.appendChild(card);
+                fragment.appendChild(card);
             });
+            this.container.appendChild(fragment);
         },
 
         createCard(item) {
             const card = document.createElement('div');
             card.className = 'public-card';
+            card.dataset.id = item.id;
 
             const img = document.createElement('img');
             img.loading = 'lazy';
+            img.decoding = 'async';
             img.src = item.image;
+            img.alt = item.prompt || '创意作品';
             card.appendChild(img);
 
             const info = document.createElement('div');
@@ -723,6 +797,7 @@
             const promptText = document.createElement('p');
             promptText.className = 'public-card-prompt';
             promptText.textContent = item.prompt || '未提供提示词';
+            promptText.title = item.prompt;
             info.appendChild(promptText);
 
             const footer = document.createElement('div');
@@ -735,7 +810,7 @@
             if (this.canDelete(item.id)) {
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'icon-btn small public-delete-btn';
-                deleteBtn.innerHTML = '🗑';
+                deleteBtn.textContent = '🗑';
                 deleteBtn.title = '删除这张作品';
                 deleteBtn.onclick = (e) => {
                     e.stopPropagation();
@@ -858,19 +933,23 @@
     const Generator = {
         sendBtn: null,
         textarea: null,
+        statusBar: null,
+        isGenerating: false,
+        generateTimeout: null,
 
         init() {
             this.sendBtn = document.getElementById('send-btn');
             this.textarea = document.getElementById('prompt');
+            this.statusBar = document.getElementById('status-bar');
 
             this.sendBtn.onclick = () => this.generate();
-            
+
             // 输入框自动高度
             this.textarea.addEventListener('input', () => {
                 this.textarea.style.height = 'auto';
                 this.textarea.style.height = this.textarea.scrollHeight + 'px';
             });
-            
+
             // 回车发送（Shift+Enter 换行）
             this.textarea.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -879,67 +958,100 @@
                 }
             });
         },
-        
+
         setLoading(loading) {
+            this.isGenerating = loading;
             if (loading) {
                 this.sendBtn.classList.add('loading');
                 this.sendBtn.disabled = true;
+                this.statusBar.textContent = '⏳ 生成中...';
+
+                // 防止生成超时 - 3分钟后强制停止
+                clearTimeout(this.generateTimeout);
+                this.generateTimeout = setTimeout(() => {
+                    if (this.isGenerating) {
+                        this.setLoading(false);
+                        this.statusBar.textContent = '生成超时，请重试';
+                        alert('生成超时，请检查网络后重试');
+                    }
+                }, 180000);
             } else {
                 this.sendBtn.classList.remove('loading');
                 this.sendBtn.disabled = false;
+                this.statusBar.textContent = 'Ready';
+                clearTimeout(this.generateTimeout);
             }
         },
-        
+
         async generate() {
+            if (this.isGenerating) return;
+
             const prompt = this.textarea.value.trim();
             if (!prompt) {
                 alert('请输入提示词');
                 return;
             }
-            
+
             this.setLoading(true);
-            
+
             try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 120000);
+
                 const response = await fetch('/api/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         prompt: prompt,
                         images: AppState.currentImages
-                    })
+                    }),
+                    signal: controller.signal
                 });
-                
+                clearTimeout(timeoutId);
+
                 const data = await response.json();
-                
+
                 if (!response.ok || !data.success) {
                     throw new Error(data.message || '生成失败');
                 }
-                
+
                 // 验证返回的图片数据
                 if (!data.image || !data.image.startsWith('data:image')) {
                     throw new Error('返回的图片数据无效');
                 }
-                
+
                 // 保存到数据库
                 await Database.save({
                     prompt: prompt,
                     image: data.image,
                     inputImages: [...AppState.currentImages]
                 });
-                
+
                 // 刷新画廊
                 await GalleryManager.load();
-                
+
                 // 清空输入
                 this.textarea.value = '';
                 this.textarea.style.height = 'auto';
                 ImageHandler.clear();
-                
+                this.statusBar.textContent = '✅ 生成成功';
+
             } catch (err) {
                 console.error('生成失败:', err);
-                alert('生成失败: ' + err.message);
+                if (err.name === 'AbortError') {
+                    this.statusBar.textContent = '⚠️ 生成超时';
+                    alert('生成超时，请检查网络后重试');
+                } else {
+                    this.statusBar.textContent = '❌ 生成失败';
+                    alert('生成失败: ' + err.message);
+                }
             } finally {
                 this.setLoading(false);
+                setTimeout(() => {
+                    if (this.statusBar.textContent !== 'Ready') {
+                        this.statusBar.textContent = 'Ready';
+                    }
+                }, 3000);
             }
         }
     };
@@ -1103,7 +1215,11 @@
     }
     
     // 启动应用
-    document.addEventListener('DOMContentLoaded', initApp);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initApp);
+    } else {
+        initApp();
+    }
     </script>
 </body>
 </html>
