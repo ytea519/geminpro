@@ -478,33 +478,30 @@ app.post('/api/public-gallery', authMiddleware, async (req, res) => {
     }
 });
 
-// 公共画廊 - 删除作品
-app.delete('/api/public-gallery/:id', authMiddleware, async (req, res) => {
-    const { deleteToken } = req.body || {};
+// 公共画廊 - 删除作品（允许任何人删除）
+app.delete('/api/public-gallery/:id', async (req, res) => {
+    const id = req.params.id;
 
-    if (!deleteToken || typeof deleteToken !== 'string') {
+    if (!id || typeof id !== 'string') {
         return res.status(400).json({
             success: false,
-            message: '缺少删除凭证'
+            message: '无效的作品 ID'
         });
     }
 
     try {
-        const result = await PublicGalleryStore.remove(req.params.id, deleteToken);
+        const items = await PublicGalleryStore.readData();
+        const targetIndex = items.findIndex(item => item.id === id);
 
-        if (!result.found) {
+        if (targetIndex === -1) {
             return res.status(404).json({
                 success: false,
                 message: '作品不存在或已被删除'
             });
         }
 
-        if (result.authorized === false) {
-            return res.status(403).json({
-                success: false,
-                message: '无权删除该作品'
-            });
-        }
+        items.splice(targetIndex, 1);
+        await PublicGalleryStore.writeData(items);
 
         res.json({ success: true, message: '删除成功' });
     } catch (error) {
